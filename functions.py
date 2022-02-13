@@ -14,7 +14,7 @@ class Term:
             self.superscript = None
             self.concatenated_terms = None
 
-    def __str__(self):
+    def __repr__(self):
         if self.is_zero:
             return '0'
         else:
@@ -22,9 +22,9 @@ class Term:
             subscript_str = ''
             concatenated_terms_str = ''
             if self.superscript:
-                superscript_str = f'superscript={{{",".join(str(n) for n in self.superscript.elements())}}}'
+                superscript_str = f'superscript={{{",".join(str(n) for n in sorted(self.superscript.elements()))}}}'
             if self.subscript:
-                subscript_str = f'subscript={{{",".join(str(n) for n in self.subscript.elements())}}}'
+                subscript_str = f'subscript={{{",".join(str(n) for n in sorted(self.subscript.elements()))}}}'
             if self.concatenated_terms:
                 concatenated_terms_str = \
                     f'concatenated_terms=[{",".join([str(term) for term in self.concatenated_terms])}]'
@@ -44,6 +44,10 @@ class Term:
             return other.is_zero
         if not self.concatenated_terms:
             return self.superscript == other.superscript and self.subscript == other.subscript
+        else:
+            self_items = self.concatenated_terms
+            other_items = other.concatenated_terms
+            return len(self_items) == len(other_items) and all(x == y for x, y in zip(self_items, other_items))
 
     def get_total_numbers(self, recursive=False):
         """ Calculate and return the set of total numbers """
@@ -55,20 +59,20 @@ class Term:
 
 
 class SumOfTerms:
-    def __init__(self, *terms):
+    def __init__(self, terms):
         self.terms = list(terms) if terms is not None else list()
 
-    def __str__(self):
+    def __repr__(self):
         string_repr = ' + '.join(str(term) for term in self.terms)
         return string_repr
 
     def __add__(self, other):
         if isinstance(other, SumOfTerms):
             self.terms.extend(other.terms)
-            return self.terms
+            return self
         elif isinstance(other, Term):
             self.terms.append(other)
-            return self.terms
+            return self
 
 
 class ScalarMultiplication:
@@ -76,7 +80,7 @@ class ScalarMultiplication:
         self.scalar = scalar
         self.term = term
 
-    def __str__(self):
+    def __repr__(self):
         string_repr = f'{self.scalar}*({str(self.term)})'
         return string_repr
 
@@ -117,20 +121,20 @@ def multiply_elementary_terms(first_term: Term, second_term: Term) -> \
     # If second subscript is a single number that is present in the first subscript,
     #   extend first superscript with the second superscript
     if total(second_sub) == 1 and total(first_sub) >= 1 and first(second_sub) in first_sub:
-        return Term(subscript=first_sub, superscript=first_super.union(second_super))
+        return Term(subscript=first_sub, superscript=(first_super + second_super))
 
     # If first subscript is a single number that is present in the second subscript,
     #   extend second superscript with the first superscript
-    if total(first_sub) == 1 and total(second_sub) >= 1 and next(iter(first_sub)) in second_sub:
-        return Term(subscript=second_sub, superscript=second_super.union(first_super))
+    if total(first_sub) == 1 and total(second_sub) >= 1 and first(first_sub) in second_sub:
+        return Term(subscript=second_sub, superscript=(second_super + first_super))
 
-    if len(first_super) == 1 and len(second_super) > 1 and next(iter(first_super)) in second_sub:
+    if total(first_super) == 1 and first(first_super) in second_sub:
         main_term = Term(subscript=first_sub)
         concatenated_term = Term(superscript=second_super, subscript=second_sub)
         main_term.concatenated_terms.append(concatenated_term)
         return main_term
 
-    if len(second_super) == 1 and len(first_super) > 1 and next(iter(second_super)) in first_sub:
+    if total(second_super) == 1 and first(second_super) in first_sub:
         main_term = Term(superscript=first_super, subscript=first_sub)
         concatenated_term = Term(subscript=second_sub)
         main_term.concatenated_terms.append(concatenated_term)
@@ -143,11 +147,53 @@ def multiply_elementary_terms(first_term: Term, second_term: Term) -> \
         second_main_term = Term(subscript=first_sub)
         second_concatenated_term = Term(superscript=first_super, subscript=second_sub)
         second_main_term.concatenated_terms.append(second_concatenated_term)
-        return SumOfTerms(first_main_term, second_main_term)
+        return SumOfTerms((first_main_term, second_main_term))
 
     # The options above cover every defined path in the pdf, so if we reached this point, something went wrong
-    raise ValueError('Error while multiplying terms')
+    raise ValueError(f'Error while multiplying terms: {str(first_term)} and {str(second_term)}')
 
 
-def fourfold():
-    pass
+def cobound_elementary_term(term: Term):
+    """ Apply cobound function to a single elementary term. """
+    if term.is_zero:
+        return Term(is_zero=True)
+    elif not term.superscript:
+        max_subscript = Counter([max(term.subscript.elements())])
+        subscript_without_max = term.subscript - max_subscript
+        return Term(superscript=max_subscript,
+                    subscript=subscript_without_max,
+                    concatenated_terms=term.concatenated_terms)
+    else:
+        # raise ValueError(f'Error while trying to apply cobound function to term: {str(term)}')
+        return None
+
+
+def cobound(term: Union[Term, SumOfTerms]):
+    if isinstance(term, SumOfTerms):
+        return SumOfTerms(terms=[cobound(summed_term) for summed_term in term.terms])
+
+    if not term.superscript:
+        return cobound_elementary_term(term)
+
+    cobound_counter = 0  # ensure that the function is applied only once
+    if term.concatenated_terms:
+        for index, concat_term in enumerate(term.concatenated_terms):
+            cobound_result = cobound(concat_term)
+            if cobound_result:
+                term.concatenated_terms[index] = cobound_result
+                cobound_counter += 1
+    if cobound_counter == 0:
+        raise ValueError(f'No elements applicable for cobound fuction found in term {term}')
+    if cobound_counter > 1:
+        raise ValueError(f'Multiple cobound-applicable elements found in term {term}')
+    return term
+
+
+def fourfold(x1: Term, x2: Term, x3: Term, x4: Term):
+    x12 = cobound(x1 * x2)
+    x23 = cobound(x2 * x3)
+    x34 = cobound(x3 * x4)
+    x13 = cobound((x1 * x23) + (x12 * x3))
+    x24 = cobound((x2 * x34) + (x23 * x4))
+    x14 = (x1 * x24) + (x12 * x34) + (x13 * x4)
+    return x12, x23, x34, x13, x24, x14
