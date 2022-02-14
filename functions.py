@@ -112,8 +112,9 @@ class Term:
             return None
         else:
             for search_term in self.concatenated_terms:
-                if search_term.search_term_by_number(number):
-                    return search_term
+                search_result = search_term.search_term_by_number(number)
+                if search_result:
+                    return search_result
 
 
 class SumOfTerms:
@@ -128,11 +129,11 @@ class SumOfTerms:
                 self.terms.append(term)
 
     def __repr__(self):
-        string_repr = '(' + ' + '.join(repr(term) for term in self.terms) + ')'
+        string_repr = ' + '.join(repr(term) for term in self.terms)
         return string_repr
 
     def __str__(self):
-        string_str = '(' + ' + '.join(str(term) for term in self.terms) + ')'
+        string_str = ' + '.join(str(term) for term in self.terms)
         return string_str
 
     def __add__(self, other):
@@ -148,6 +149,11 @@ class SumOfTerms:
 
     def __rmul__(self, other):
         return multiply_terms(first_term=other, second_term=self)
+
+    def __eq__(self, other):
+        return isinstance(other, SumOfTerms) \
+               and len(self.terms) == len(other.terms) \
+               and all(x == y for x, y in zip(self.terms, other.terms))
 
 
 class ScalarMultiplication:
@@ -251,27 +257,52 @@ def multiply_single_terms(first_term: Term, second_term: Term) -> Union[Term, Su
     common_number = first(first_numbers & second_numbers)
     first_term_multiplication_node = first_term.search_term_by_number(common_number)
     second_term_multiplication_node = second_term.search_term_by_number(common_number)
-    multiplication_product = first_term_multiplication_node * second_term_multiplication_node
-    if isinstance(multiplication_product, SumOfTerms):
-        multiplication_products = multiplication_product.terms
+    node_multiplication_product = multiply_elementary_terms(first_term_multiplication_node,
+                                                            second_term_multiplication_node)
+    if isinstance(node_multiplication_product, SumOfTerms):
+        multiplication_products = node_multiplication_product.terms
     else:
-        multiplication_products = [multiplication_product]
+        multiplication_products = [node_multiplication_product]
 
-    for product in multiplication_products:
-        copied_first_node = deepcopy(first_term_multiplication_node)
-        copied_second_node = deepcopy(second_term_multiplication_node)
+    overall_multiplication_products = list()
+    for product_node in multiplication_products:
+        if not product_node or product_node.is_zero:
+            continue
+        copied_first_term = deepcopy(first_term)
+        copied_second_term = deepcopy(second_term)
+        copied_first_node = copied_first_term.search_term_by_number(common_number)
+        copied_second_node = copied_second_term.search_term_by_number(common_number)
+
         if copied_first_node.ancestor:
             copied_first_node.ancestor.concatenated_terms.remove(copied_first_node)
-            product.ancestor = copied_first_node
-            copied_first_node.ancestor.concatenated_terms.append(product)
+            product_node.ancestor = copied_first_node.ancestor
+            copied_first_node.ancestor.concatenated_terms.append(product_node)
+        else:
+            copied_first_term = product_node
 
-        if copied_second_node.concatenated_terms:
-            product.concatenated_terms.extend(copied_second_node.concatenated_terms)
+        # In case elementary multiplication returns not just a single term, but an already concatenated node X1~X2,
+        # we want to attach the rest of the tree to the node X2, not X1
+        extension_point = product_node.concatenated_terms
+        if product_node.concatenated_terms:
+            extension_point = product_node.concatenated_terms[0].concatenated_terms
 
         if copied_second_node.ancestor:
             reversed_second_ancestor_tree = reverse_tree(copied_second_node)
-            product.concatenated_terms.extend(reversed_second_ancestor_tree.concatenated_terms)
-    return first_term
+            extension_point.extend(reversed_second_ancestor_tree.concatenated_terms)
+
+        if copied_first_node.concatenated_terms:
+            extension_point.extend(copied_first_node.concatenated_terms)
+        if copied_second_node.concatenated_terms:
+            extension_point.extend(copied_second_node.concatenated_terms)
+
+        overall_multiplication_products.append(copied_first_term)
+
+    if len(overall_multiplication_products) == 0:
+        return Term(is_zero=True)
+    if len(overall_multiplication_products) == 1:
+        return overall_multiplication_products[0]
+    else:
+        return SumOfTerms(terms=overall_multiplication_products)
 
 
 def reverse_tree(root_node: Term):
@@ -357,7 +388,11 @@ def cobound(term: Union[Term, SumOfTerms]):
     return term
 
 
-def fourfold(x1: Term, x2: Term, x3: Term, x4: Term):
+def fourfold(x1: Union[Term, SumOfTerms],
+             x2: Union[Term, SumOfTerms],
+             x3: Union[Term, SumOfTerms],
+             x4: Union[Term, SumOfTerms]):
+    """ The main fourfold function. """
     x12 = cobound(x1 * x2)
     x23 = cobound(x2 * x3)
     x34 = cobound(x3 * x4)
@@ -365,3 +400,32 @@ def fourfold(x1: Term, x2: Term, x3: Term, x4: Term):
     x24 = cobound((x2 * x34) + (x23 * x4))
     x14 = (x1 * x24) + (x12 * x34) + (x13 * x4)
     return x12, x23, x34, x13, x24, x14
+
+
+def main():
+    x1 = Term(superscript={10}, subscript={4, 8, 9})
+    x2 = Term(superscript={4}, subscript={1, 2, 3})
+    x3 = Term(superscript={7}, subscript={3, 5, 6}) + Term(superscript={7}, subscript={4, 5, 6})
+    x4 = Term(superscript={13}, subscript={7, 11, 12})
+    # x5 = Term(superscript={13}, subscript={7, 11, 12}, concatenated_terms=[x3,x4]) - concatenation syntax
+
+    x12, x23, x34, x13, x24, x14 = fourfold(x1, x2, x3, x4)
+    print('Reprs:')
+    print(f'x12={repr(x12)}')
+    print(f'x23={repr(x23)}')
+    print(f'x34={repr(x34)}')
+    print(f'x13={repr(x13)}')
+    print(f'x24={repr(x24)}')
+    print(f'x14={repr(x14)}')
+
+    print('\nStrs:')
+    print(f'x12={str(x12)}')
+    print(f'x23={str(x23)}')
+    print(f'x34={str(x34)}')
+    print(f'x13={str(x13)}')
+    print(f'x24={str(x24)}')
+    print(f'x14={str(x14)}')
+
+
+if __name__ == '__main__':
+    main()
