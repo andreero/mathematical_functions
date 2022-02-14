@@ -11,6 +11,8 @@ term_3x5 = Term(subscript={1, 2}, superscript={4, 5, 8, 9})
 term_5x4 = Term(subscript={2, 3}, superscript={6, 7, 8, 9})
 x1 = Term(superscript={10}, subscript={4, 8, 9})
 x2 = Term(superscript={4}, subscript={1, 2, 3})
+x3 = Term(superscript={7}, subscript={3, 5, 6}) + Term(superscript={7}, subscript={4, 5, 6})
+x4 = Term(superscript={13}, subscript={7, 11, 2})
 x12 = Term(superscript={10}, subscript={4, 8, 9}, concatenated_terms=[Term(subscript={1, 2, 3})])
 
 
@@ -45,3 +47,18 @@ class TestCobound:
 
     def test_cobound_simple(self):
         assert cobound(cobound_term_1) == cobound_result_1
+
+
+cobound_result_x12 = Term(superscript={10}, subscript={4, 8, 9},
+                          concatenated_terms=[Term(superscript={3}, subscript={1, 2})])
+cobound_result_x23 = Term(superscript={3}, subscript={1, 2},
+                          concatenated_terms=[Term(superscript={7}, subscript={4, 5, 6})])
+# cobound_result_x34 = Term(s)
+
+
+class TestCombination:
+    def test_cobound_and_multiplication_simple(self):
+        assert cobound(x1*x2) == cobound_result_x12
+
+    def test_cobound_and_multiplication_and_addition(self):
+        assert cobound(x2*x3) == cobound_result_x23
