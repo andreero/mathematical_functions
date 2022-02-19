@@ -1,5 +1,4 @@
 from typing import Union, Set
-from copy import deepcopy
 from collections import Counter
 
 
@@ -84,16 +83,6 @@ class Term:
         if isinstance(other, Term):
             return self.__key() == other.__key()
         return NotImplemented
-
-    # def __eq__(self, other):
-    #     if self.is_zero:
-    #         return other.is_zero
-    #     if not self.concatenated_terms:
-    #         return self.superscript == other.superscript and self.subscript == other.subscript
-    #     else:
-    #         self_items = self.concatenated_terms
-    #         other_items = other.concatenated_terms
-    #         return len(self_items) == len(other_items) and all(x == y for x, y in zip(self_items, other_items))
 
     def get_total_numbers(self, recursive=False):
         """ Calculate and return total numbers count in both
@@ -257,6 +246,76 @@ def multiply_elementary_terms(first_term: Term, second_term: Term) -> Union[Term
     raise ValueError(f'Error while multiplying terms: {str(first_term)} and {str(second_term)}')
 
 
+def reverse_tree(root_node: Term) -> Term:
+    above_node = root_node.ancestor
+    if above_node:
+        above_node.concatenated_terms.remove(root_node)
+        root_node.concatenated_terms.append(above_node)
+        reverse_tree(root_node=above_node)
+        above_node.ancestor = root_node
+    return root_node
+
+
+def deepcopy_term(original_term: Term) -> Term:
+    """ Have to have my own implementation of deepcopy because copy.deepcopy() makes wrong ancestor links. """
+    new_term = Term(
+        is_zero=original_term.is_zero,
+        subscript=original_term.subscript,
+        superscript=original_term.superscript,
+        ancestor=original_term.ancestor
+    )
+    for concatenated_term in original_term.concatenated_terms:
+        copied_concatenated_term = deepcopy_term(concatenated_term)
+        copied_concatenated_term.ancestor = new_term
+        new_term.concatenated_terms.append(copied_concatenated_term)
+    return new_term
+
+
+def merge_concatenation_chains(first_term: Term, second_term: Term,
+                               multiplication_product: Term, common_number: int) -> Term:
+    """ Find the intersection point between two concatenated chains,
+        replace the corresponding node in the first chain with the multiplication product,
+        and merge the ancestor and descendant nodes of the second chain to that node.
+
+    Example: if our inputs are A~B~C and I~J~K~L, and the common number occurs in nodes B and K:
+    1) Replace B with the multiplication product B'~K': A~B'~K'~C
+    2) Merge the ancestor chain of K in reverse order: A~B'~K'~[C, J~I]
+    3) Merge the descendant nodes of K: A~B'~K'~[C, J~I, L]
+    """
+
+    copied_product_node = deepcopy_term(multiplication_product)
+    copied_first_term = deepcopy_term(first_term)
+    copied_second_term = deepcopy_term(second_term)
+    copied_first_node = copied_first_term.search_term_by_number(common_number)
+    copied_second_node = copied_second_term.search_term_by_number(common_number)
+
+    # In case elementary multiplication returns not just a single term, but an already concatenated node X1~X2,
+    # we want to attach the rest of the tree to the node X2, not X1
+    second_term_extension_point = copied_product_node.concatenated_terms
+    if copied_product_node.concatenated_terms:
+        second_term_extension_point = copied_product_node.concatenated_terms[0].concatenated_terms
+
+    if copied_second_node.ancestor:
+        reversed_second_ancestor_tree = reverse_tree(copied_second_node)
+        second_term_extension_point.extend(reversed_second_ancestor_tree.concatenated_terms)
+
+    if copied_first_node.concatenated_terms:
+        copied_product_node.concatenated_terms.extend(copied_first_node.concatenated_terms)
+    if copied_second_node.concatenated_terms:
+        second_term_extension_point.extend(copied_second_node.concatenated_terms)
+
+    if copied_first_node.ancestor:
+        ancestor = copied_first_node.ancestor
+        ancestor.concatenated_terms.append(copied_product_node)
+        ancestor.concatenated_terms.remove(copied_first_node)
+        while copied_first_node.ancestor:
+            copied_first_node = copied_first_node.ancestor
+        copied_first_term = copied_first_node
+    else:
+        copied_first_term = copied_product_node
+    return copied_first_term
+
+
 def multiply_single_terms(first_term: Term, second_term: Term) -> Union[Term, SumOfTerms]:
     """ Multiply single terms that may have concatenated elements."""
     first_numbers = first_term.get_total_numbers(recursive=True)
@@ -292,34 +351,11 @@ def multiply_single_terms(first_term: Term, second_term: Term) -> Union[Term, Su
     for product_node in multiplication_products:
         if not product_node or product_node.is_zero:
             continue
-        copied_first_term = deepcopy(first_term)
-        copied_second_term = deepcopy(second_term)
-        copied_first_node = copied_first_term.search_term_by_number(common_number)
-        copied_second_node = copied_second_term.search_term_by_number(common_number)
-
-        if copied_first_node.ancestor:
-            copied_first_node.ancestor.concatenated_terms.remove(copied_first_node)
-            product_node.ancestor = copied_first_node.ancestor
-            copied_first_node.ancestor.concatenated_terms.append(product_node)
-        else:
-            copied_first_term = product_node
-
-        # In case elementary multiplication returns not just a single term, but an already concatenated node X1~X2,
-        # we want to attach the rest of the tree to the node X2, not X1
-        second_term_extension_point = product_node.concatenated_terms
-        if product_node.concatenated_terms:
-            second_term_extension_point = product_node.concatenated_terms[0].concatenated_terms
-
-        if copied_second_node.ancestor:
-            reversed_second_ancestor_tree = reverse_tree(copied_second_node)
-            second_term_extension_point.extend(reversed_second_ancestor_tree.concatenated_terms)
-
-        if copied_first_node.concatenated_terms:
-            product_node.concatenated_terms.extend(copied_first_node.concatenated_terms)
-        if copied_second_node.concatenated_terms:
-            second_term_extension_point.extend(copied_second_node.concatenated_terms)
-
-        overall_multiplication_products.append(copied_first_term)
+        merged_term = merge_concatenation_chains(first_term=first_term,
+                                                 second_term=second_term,
+                                                 multiplication_product=product_node,
+                                                 common_number=common_number)
+        overall_multiplication_products.append(merged_term)
 
     if len(overall_multiplication_products) == 0:
         return Term(is_zero=True)
@@ -327,16 +363,6 @@ def multiply_single_terms(first_term: Term, second_term: Term) -> Union[Term, Su
         return overall_multiplication_products[0]
     else:
         return SumOfTerms(terms=overall_multiplication_products)
-
-
-def reverse_tree(root_node: Term):
-    above_node = root_node.ancestor
-    if above_node:
-        above_node.concatenated_terms.remove(root_node)
-        root_node.concatenated_terms.append(above_node)
-        reverse_tree(root_node=above_node)
-        above_node.ancestor = root_node
-    return root_node
 
 
 def multiply_terms(first_term: Union[Term, SumOfTerms], second_term: Union[Term, SumOfTerms]) -> \
@@ -361,7 +387,7 @@ def multiply_terms(first_term: Union[Term, SumOfTerms], second_term: Union[Term,
             if isinstance(product, SumOfTerms):
                 multiplication_products.extend(product.terms)
             elif isinstance(product, Term) and not product.is_zero:
-                multiplication_products.append(i * j)
+                multiplication_products.append(product)
 
     if not multiplication_products:
         return Term(is_zero=True)
@@ -427,14 +453,10 @@ def fourfold(x1: Union[Term, SumOfTerms],
 
 
 def main():
-    x1 = Term(superscript={1}, subscript={8, 9, 10}) + Term(superscript={2}, subscript={8, 9, 10}) + Term(
-        superscript={3}, subscript={8, 9, 10}) + Term(superscript={4}, subscript={8, 9, 10})
-    x2 = Term(superscript={4}, subscript={1, 2, 3})
-    x3 = Term(superscript={7}, subscript={1, 5, 6}) + Term(superscript={7}, subscript={2, 5, 6}) + Term(superscript={7},
-                                                                                                        subscript={3, 5,
-                                                                                                                   6}) + Term(
-        superscript={7}, subscript={4, 5, 6})
-    x4 = Term(superscript={13}, subscript={7, 11, 12})
+    x1 = Term(superscript={6}, subscript={1, 3, 5})
+    x2 = Term(superscript={7}, subscript={2, 4, 6})
+    x3 = Term(superscript={10}, subscript={7, 8, 9})
+    x4 = Term(superscript={10}, subscript={11, 12, 13})
     # x5 = Term(superscript={13}, subscript={7, 11, 12}, concatenated_terms=[x3,x4]) - concatenation syntax
 
     x12, x23, x34, x13, x24, x14 = fourfold(x1, x2, x3, x4)
